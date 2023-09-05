@@ -82,8 +82,8 @@ This tells Agones that the game server is ready to take player connections.
 This updates the Kubernetes `GameServer` record to the `Ready` state, and poulates the public 
 IP address and connection port.
 
-The preferred pattern is to call `Shutdown()` once a game has completed, and allow your defined 'fleet' and 'fleetAutoScaler' resources to start a new `GameServer` as necessary, which allows Agones to enforce the [scheduling policy]{{< ref "/docs/Advanced/scheduling-and-autoscaling.md" >}} you've selected. 
-This SDK call can also [change an `Allocated` `GameServer` back to the `Ready` state to be available for allocation again]{{< ref "/docs/Integration Patterns/reusing-gameservers.md" >}}, if this is a better fit for your usage pattern.
+The preferred pattern is to call `Shutdown()` once a game has completed, and allow your defined 'fleet' and 'fleetAutoScaler' resources to start a new `GameServer` as necessary, which allows Agones to enforce the [scheduling policy]({{% ref "/docs/Advanced/scheduling-and-autoscaling.md" %}}) you've selected. 
+This SDK call can also [change an `Allocated` `GameServer` back to the `Ready` state to be available for allocation again]({{% ref "/docs/Integration Patterns/reusing-gameservers.md" %}}), if this is a better fit for your usage pattern.
 
 #### Health()
 This sends a heartbeat to the SDK to designate that the `GameServer` is alive and
@@ -95,38 +95,33 @@ configurations.
 
 #### Reserve(seconds)
 
-With some matchmaking systems, just-in-time allocation of game servers when a match is found is not a good fit. A common approach for these systems 'reserves' a game server when the search for a match begins. This:
-*  Prevents the server from being deleted while the match search is in progress
+With some matchmaking systems, just-in-time allocation of game servers when a match is found is not a good fit. A common approach for these systems 'registers' a game server with the matchmaker while the search for a match is in progress.  The [Matchmaker registration pattern]({{% ref "/docs/Integration Patterns/matchmaker-registration.md" %}}) covers this style of matchmaker in more detail. For this use-case, Agones has the `Reserve(seconds)` SDK function, which:
+*  Prevents the server from being deleted 
 *  Signals to other systems that this server is in consideration by the matchmaker
-*  **Crucially, does not** trigger a FleetAutoscaler scale up   
-This is where `Reserve(seconds)` is useful.  It serves a similar purpose to `Allocate` without causing scaling events.
+*  **Crucially, will never** trigger a `FleetAutoscaler` scale up event, the way an `Allocate` call could 
+The function accomplishes this by moving the `GameServer` into the `Reserved` state for the specified number of seconds (0 is forever), after which Agones moves it back to `Ready` state. While in `Reserved` state, the `GameServer` will not be deleted during a scale down or `Fleet` update event, and also it will not be returned when an external system requests a [GameServerAllocation]({{% ref "/docs/Reference/gameserverallocation.md" %}}) from the Agones controller.  
 
-`Reserve(seconds)` will move the `GameServer` into the Reserved state for the specified number of seconds (0 is forever), and then it will be
-moved back to `Ready` state. While in `Reserved` state, the `GameServer` will not be deleted on scale down or `Fleet` update,
-and also it could not be Allocated using [GameServerAllocation]({{< ref "/docs/Reference/gameserverallocation.md" >}}).
-
-This is often used when a game server process must register itself with an external system, such as a matchmaker,
-that requires it to designate itself as available for a game session for a certain period. Once a game session has started,
-it should call `SDK.Allocate()` to designate that players are currently active on it.
-
-Calling other state changing SDK commands such as `Ready` or `Allocate` will turn off the timer to reset the `GameServer` back
-to the `Ready` state or to promote it to an `Allocated` state accordingly.
+{{< alert title="Note" color="info">}}
+To move a `GameServer` from `Reserved` to `Allocated` in this pattern, the **game server itself** should call `SDK.Allocate()`.  Note that state-changing SDK commands such as `Allocate()` or `Ready()` will attempt to update the state immediately, disregarding any timeout specified in a previous `Reserve(seconds)` call.
+{{< /alert >}}
 
 #### Allocate()
 
-With some matchmakers and game matching strategies, it can be important for game servers to mark themselves as `Allocated`.
-For those scenarios, this SDK functionality exists.
+With some matchmaking strategies, game servers need to mark themselves as `Allocated`.
+For those scenarios, Agones has the `Allocate()` SDK function.
 
-There is a chance that GameServer does not actually become `Allocated` after this call. Please refer to the general note in [Function Reference](#function-reference) above.
+The `agones.dev/last-allocated` annotation on the GameServer will be set to an RFC3339-formatted timestamp of the time of allocation, even if the GameServer was already in an `Allocated` state.
 
-The `agones.dev/last-allocated` annotation will be set on the GameServer to an RFC3339 formatted timestamp of the time of allocation, even if the GameServer was already in an `Allocated` state.
-
-Note that if using `SDK.Allocate()` in combination with [GameServerAllocation]({{< ref "/docs/Reference/gameserverallocation.md" >}})s, it's possible for the `agones.dev/last-allocated` timestamp to move backwards if clocks are not synchronized between the Agones controller and the GameServer pod.
+Note that if your usage pattern involves game servers using `SDK.Allocate()` in combination with external systems requesting [GameServerAllocation]({{% ref "/docs/Reference/gameserverallocation.md" %}}) from the Kubernetes API, it's possible for the `agones.dev/last-allocated` timestamp to move backwards if clocks are not synchronized between the Agones controller and the GameServer pod.
 
 {{< alert title="Note" color="info">}}
-Using a [GameServerAllocation]({{< ref "/docs/Reference/gameserverallocation.md" >}}) is preferred in all other scenarios, 
-as it gives Agones control over how packed `GameServers` are scheduled within a cluster, whereas with `Allocate()` you
-relinquish control to an external service which likely doesn't have as much information as Agones.
+Although game servers **can** mark themselves as allocated using this SDK function, requesting a 
+[GameServerAllocation]({{% ref "/docs/Reference/gameserverallocation.md" %}}) from the Kubernetes 
+API instead is the preferred pattern. 
+This allows Agones to apply your [configured `fleet` scheduling strategy]({{% ref "/docs/Advanced/scheduling-and-autoscaling.md#fleet-scheduling" %}}), potentially resulting in better game server performance or cost savings. Having game servers call `Allocate()` relinquishs control of scheduling 
+to an external service which likely doesn't have as much information about your Kubernetes usage as Agones.
+
+Also, note that this function **does not** guarantee that the `GameServer` moves to the `Allocated` status. Please refer to the warning in the [Function Reference](#function-reference) section above about using the `WatchGameServer()` function.
 {{< /alert >}}
 
 #### Shutdown()
