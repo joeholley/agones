@@ -24,16 +24,15 @@ The current supported SDKs are:
 You can also find some externally supported SDKs in our 
 [Third Party Content]({{% ref "/docs/Third Party Content/libraries-tools.md#client-sdks" %}}).
 
-The SDKs are relatively thin wrappers around [gRPC](https://grpc.io) generated clients,
-or an implementation of the REST API (exposed via [grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway)), 
-where gRPC client generation and compilation isn't well supported.
+Most SDKs are relatively thin wrappers around [gRPC](https://grpc.io) generated clients. However, in cases 
+where gRPC client generation and compilation isn't well supported, the SDK may instead be using the REST API exposed via [grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway)) .
 
-They connect to a small process that Agones coordinates to run alongside the Game Server
+The SDK connects to a small process that Agones coordinates to run alongside the Game Server
 in a Kubernetes [`Pod`](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/).
 This means that more languages can be supported in the future with minimal effort
 (but pull requests are welcome! 😊 ).
 
-There is also [local development tooling]({{< relref "local.md" >}}) for working against the SDK locally,
+There is also [local development tooling]({{< relref "local.md" >}}) for working against the SDK locally
 without having to spin up an entire Kubernetes infrastructure.
 
 ## Connecting to the SDK Server
@@ -47,57 +46,60 @@ Agones will automatically set the following environment variables on all game se
 * `AGONES_SDK_GRPC_PORT`: The port where the gRPC server is listening (defaults to 9357)
 * `AGONES_SDK_HTTP_PORT`: The port where the grpc-gateway is listening (defaults to 9358)
 
-The SDKs will automatically discover and connect to the gRPC port specified in the environment variable.
+The SDKs will automatically discover and connect to the gRPC port specified in Agones config by reading the environment variable.
 
-If your game server requires using a REST client, it is advised to use the port from the environment variable,
-otherwise your game server will not be able to contact the SDK server if it is configured to use a non-default port.
+If your game server cannot use any of the provided SDK clients and instead directly makes REST calls to the SDK server using an generic HTTP client, 
+we recommend configuring your HTTP client to connect using the port from the `AGONES_SDK_HTTP_PORT` environment variable in case the SDK server is configured to listen on a different port.
 
 ## Function Reference
 
 While each of the SDKs are canonical to their languages, they all have the following
 functions that implement the core responsibilities of the SDK.
 
-For language specific documentation, have a look at the respective source (linked above), 
+For language specific documentation have a look at the respective source (linked above) 
 and the {{< ghlink href="examples" >}}examples{{< /ghlink >}}.
 
-Calling any of state changing functions mentioned below does not guarantee that GameServer Custom Resource object would actually change its state right after the call. For instance, it could be moved to the `Shutdown` state elsewhere (for example, when a fleet scales down), which leads to no changes in `GameServer` object. You can verify the result of this call by waiting for the desired state in a callback to WatchGameServer() function.
+{{< alert title="Warning" color="warning">}}
+Calling any of state-changing functions mentioned below does not guarantee that the `GameServer` Custom Resource object in Kubernetes will actually change its state immediately. For instance, if another event (such as a fleet scaling down) moves the GameServer to the `Shutdown` state while your SDK function is being processed, this could lead to your SDK call having no effect. If your approach depends on state transitions, you should verify the SDK call resulted in your desired pod state with callbacks by using the `WatchGameServer()` function.
+{{< /alert >}}
 
-Functions which changes GameServer state or settings are:
+Functions which change `GameServer` state or settings are:
 
-1. Ready()
-1. Shutdown()
-1. SetLabel()
-1. SetAnnotation()
-1. Allocate()
-1. Reserve() 
-1. Alpha().SetCapacity()
-1. Alpha().PlayerConnect()
-1. Alpha().PlayerDisconnect()
+1. `Ready()`
+1. `Shutdown()`
+1. `SetLabel()`
+1. `SetAnnotation()`
+1. `Allocate()`
+1. `Reserve()`
+1. `Alpha().SetCapacity()`
+1. `Alpha().PlayerConnect()`
+1. `Alpha().PlayerDisconnect()`
 
 ### Lifecycle Management
 
 #### Ready()
-This tells Agones that the Game Server is ready to take player connections.
-Once a Game Server has specified that it is `Ready`, then the Kubernetes
-GameServer record will be moved to the `Ready` state, and the details
-for its public address and connection port will be populated.
+This tells Agones that the game server is ready to take player connections.
+This updates the Kubernetes `GameServer` record to the `Ready` state, and poulates the public 
+IP address and connection port.
 
-While Agones prefers that `Shutdown()` is run once a game has completed to delete the `GameServer` instance,
-if you want or need to move an `Allocated` `GameServer` back to `Ready` to be reused, you can call this SDK method again to do
-this.
+The preferred pattern is to call `Shutdown()` once a game has completed, and allow your defined 'fleet' and 'fleetAutoScaler' resources to start a new `GameServer` as necessary, which allows Agones to enforce the [scheduling policy]{{< ref "/docs/Advanced/scheduling-and-autoscaling.md" >}} you've selected. 
+This SDK call can also [change an `Allocated` `GameServer` back to the `Ready` state to be available for allocation again]{{< ref "/docs/Integration Patterns/reusing-gameservers.md" >}}, if this is a better fit for your usage pattern.
 
 #### Health()
-This sends a single ping to designate that the Game Server is alive and
-healthy. Failure to send pings within the configured thresholds will result
-in the GameServer being marked as `Unhealthy`. 
+This sends a heartbeat to the SDK to designate that the `GameServer` is alive and
+healthy. Failure to send heartbeats within the threshold configured in the `health` section of the 
+`GameServer` spec will result in the `GameServer` being marked as `Unhealthy`. 
 
 See the {{< ghlink href="examples/gameserver.yaml" >}}gameserver.yaml{{< /ghlink >}} for all health checking
 configurations.
 
 #### Reserve(seconds)
 
-With some matchmaking scenarios and systems it is important to be able to ensure that a `GameServer` is unable to be deleted,
-but doesn't trigger a FleetAutoscaler scale up. This is where `Reserve(seconds)` is useful.
+With some matchmaking systems, just-in-time allocation of game servers when a match is found is not a good fit. A common approach for these systems 'reserves' a game server when the search for a match begins. This:
+*  Prevents the server from being deleted while the match search is in progress
+*  Signals to other systems that this server is in consideration by the matchmaker
+*  **Crucially, does not** trigger a FleetAutoscaler scale up   
+This is where `Reserve(seconds)` is useful.  It serves a similar purpose to `Allocate` without causing scaling events.
 
 `Reserve(seconds)` will move the `GameServer` into the Reserved state for the specified number of seconds (0 is forever), and then it will be
 moved back to `Ready` state. While in `Reserved` state, the `GameServer` will not be deleted on scale down or `Fleet` update,
@@ -128,20 +130,21 @@ relinquish control to an external service which likely doesn't have as much info
 {{< /alert >}}
 
 #### Shutdown()
-This tells Agones to shut down the currently running game server. The GameServer state will be set `Shutdown` and the 
-backing Pod will be Terminated.
+This tells Agones to shut down the game server which made the API call. The game server state will be set `Shutdown` and the 
+backing Pod will be `Terminated`.
 
 It's worth reading the [Termination of Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination)
 Kubernetes documentation, to understand the termination process, and the related configuration options.
 
-As a rule of thumb, implement a graceful shutdown in your game sever process when it receives the TERM signal
-from Kubernetes when the backing Pod goes into Termination state.
+As a rule of thumb, implement a graceful shutdown in your game sever process when it receives the TERM signal. 
+Kubernetes will send this signal to your application when the backing Pod transitions to the `Terminated` state.
 
-Be aware that if you use a variation of `System.exit(0)` after calling SDK.Shutdown(), your game server container may
+Be aware that if you use a variation of `System.exit(0)` after calling `SDK.Shutdown()`, your game server container may
 restart for a brief period, inline with our [Health Checking]({{% ref "/docs/Guides/health-checking.md#health-failure-strategy" %}}) policies. 
 
-If the SDK server receives a TERM signal before calling SDK.Shutdown(),
-the SDK server will stay alive for the period of the `terminationGracePeriodSeconds` until `SDK.Shutdown()` has been called.
+It is possible for the SDK server to receive a TERM signal from Kubernetes without receiving a SDK.Shutdown() API request from
+your GameServer. In this case, the SDK server will stay alive until the `terminationGracePeriodSeconds` in it's `podSpec` have
+elapsed, or until it receives the `SDK.Shutdown()` API request from your game server, whichever comes first.
 
 ### Configuration Retrieval 
 
@@ -156,30 +159,32 @@ the returned object is limited to that configuration that was deemed useful. If 
 areas that you feel are missing, please [file an issue](https://github.com/googleforgames/agones/issues) or pull request.
 
 The easiest way to see what is exposed, is to check
-the {{% ghlink href="proto/sdk/sdk.proto" %}}`sdk.proto`{{% /ghlink %}}, specifically at
-the `message GameServer`.
+the {{% ghlink href="proto/sdk/sdk.proto" %}}`sdk.proto`{{% /ghlink %}} source file, specifically
+the `message GameServer` portion.
 
-For language specific documentation, have a look at the respective source (linked above), 
+For language specific documentation, have a look at the respective source (linked above) 
 and the {{< ghlink href="examples" >}}examples{{< /ghlink >}}.
 
 #### WatchGameServer(function(gameserver){...})
 
 This executes the passed in callback with the current `GameServer` details whenever the underlying `GameServer` configuration is updated.
-This can be useful to track `GameServer > Status > State` changes, `metadata` changes, such as labels and annotations, and more.
+This can be useful to track `GameServer > Status > State` changes, `metadata` changes such as labels and annotations, and more.
 
 In combination with this SDK, manipulating [Annotations](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/) and
-[Labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) can also be a useful way to communicate information through to running game server processes from outside those processes.
-This is especially useful when combined with `GameServerAllocation` [applied metadata]({{< ref "/docs/Reference/gameserverallocation.md" >}}).
+[Labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) can also be a useful way to communicate information through Kubernetes to running game server processes 
+from outside processes and systems.  This is especially useful when combined with
+[metadata applied]({{< ref "/docs/Reference/gameserverallocation.md" >}}) during
+`GameServerAllocation` .
 
 Since the GameServer contains an entire [PodTemplate](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/#pod-templates)
 the returned object is limited to that configuration that was deemed useful. If there are
 areas that you feel are missing, please [file an issue](https://github.com/googleforgames/agones/issues) or pull request.
 
 The easiest way to see what is exposed, is to check
-the {{% ghlink href="proto/sdk/sdk.proto" %}}`sdk.proto`{{% /ghlink %}}, specifically at
-the `message GameServer`.
+the {{% ghlink href="proto/sdk/sdk.proto" %}}`sdk.proto`{{% /ghlink %}} source file, specifically
+the `message GameServer` portion..
 
-For language specific documentation, have a look at the respective source (linked above), 
+For language specific documentation, have a look at the respective source (linked above) 
 and the {{< ghlink href="examples" >}}examples{{< /ghlink >}}.
 
 
@@ -187,23 +192,20 @@ and the {{< ghlink href="examples" >}}examples{{< /ghlink >}}.
 
 #### SetLabel(key, value)
 
-This will set a [Label](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) value on the backing `GameServer`
-record that is stored in Kubernetes. 
+This will set a [Label](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) 
+key/value pair on the backing `GameServer` record that is stored in Kubernetes. 
 
 To maintain isolation, the `key` value is automatically prefixed with the value **"agones.dev/sdk-"**. This is done for 
 two main reasons:
-*  The prefix allows the developer to always know if they are accessing or reading a value that could have come, or 
+*  The prefix allows the developer to always know if they are accessing a value that could have come from, or 
    may be changed by the client SDK. Much like `private` vs `public` scope in a programming language, the Agones 
-   SDK only gives you access to write to part of the set of labels and annotations that exist on a GameServer.
-*  The prefix allows for a smaller attack surface if the GameServer container gets compromised. Since the 
-   game container is generally externally exposed, and the Agones project doesn't control the binary that is 
-   run within it, limiting exposure if the game server becomes compromised is worth the extra 
-   development friction that comes with having this prefix in place.
+   SDK only provides write access to GameServer labels with this prefix.
+*  The prefix allows for a smaller attack surface if the GameServer container gets compromised. Since a common approach is to expose GameServer containers directly to the internet to minimize network latency and the Agones project doesn't control what runs inside the container, limiting exposure if the pod were to become compromised is worth the extra development friction that comes with having this prefix in place.
 
 {{< alert title="Warning" color="warning">}}
-There are limits on the characters that be used for label keys and values. Details are [here](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set).
-
-You will need to take them into account when combined with the label prefix above. 
+Kubernetes has [limits on label lengths and which characters are allowed in keys and values](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set). 
+ 
+Be sure to account for the label prefix above when considering length limits! 
 {{< /alert >}}
 
 Setting `GameServer` labels can be useful if you want information from your running game server process to be 
@@ -211,7 +213,7 @@ observable or searchable through the Kubernetes API.
 
 #### SetAnnotation(key, value)
 
-This will set an [Annotation](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/) value 
+This will set an [Annotation](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/) key/value pair
 on the backing `GameServer` record that is stored in Kubernetes. 
 
 To maintain isolation, the `key` value is automatically prefixed with **"agones.dev/sdk-"** for the same reasons as 
