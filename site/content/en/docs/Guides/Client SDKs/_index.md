@@ -118,70 +118,62 @@ Note that if your usage pattern involves game servers using `SDK.Allocate()` in 
 Although game servers **can** mark themselves as allocated using this SDK function, requesting a 
 [GameServerAllocation]({{% ref "/docs/Reference/gameserverallocation.md" %}}) from the Kubernetes 
 API instead is the preferred pattern. 
-This allows Agones to apply your [configured `fleet` scheduling strategy]({{% ref "/docs/Advanced/scheduling-and-autoscaling.md#fleet-scheduling" %}}), potentially resulting in better game server performance or cost savings. Having game servers call `Allocate()` relinquishs control of scheduling 
-to an external service which likely doesn't have as much information about your Kubernetes usage as Agones.
+This allows Agones to apply your [configured `fleet` scheduling strategy]({{% ref "/docs/Advanced/scheduling-and-autoscaling.md#fleet-scheduling" %}}), potentially resulting in better game server performance or cost savings. Having game servers call `Allocate()` relinquishes control of scheduling 
+to another service, which likely doesn't have as much information about your current Kubernetes usage as Agones.
 
-Also, note that this function **does not** guarantee that the `GameServer` moves to the `Allocated` status. Please refer to the warning in the [Function Reference](#function-reference) section above about using the `WatchGameServer()` function.
+Also, note that `SDK.Allocate()` **does not** guarantee that the `GameServer` moves to the `Allocated` status. Please refer to the warning in the [Function Reference](#function-reference) section above about using the `WatchGameServer()` function.
 {{< /alert >}}
 
 #### Shutdown()
-This tells Agones to shut down the game server which made the API call. The game server state will be set `Shutdown` and the 
-backing Pod will be `Terminated`.
+This tells Agones to begin the shut down process for the game server which made the API call. The game server state will be set `Shutdown` and the 
+backing Pod will be `Terminated`. It is a good idea to make sure you are familiar with the [Termination of Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination)
+Kubernetes documentation to understand the termination process and related configuration options.
 
-It's worth reading the [Termination of Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination)
-Kubernetes documentation, to understand the termination process, and the related configuration options.
-
-As a rule of thumb, implement a graceful shutdown in your game sever process when it receives the TERM signal. 
+The recommended approach is to implement a graceful shutdown of your game sever process when it receives the TERM signal. 
 Kubernetes will send this signal to your application when the backing Pod transitions to the `Terminated` state.
 
-Be aware that if you use a variation of `System.exit(0)` after calling `SDK.Shutdown()`, your game server container may
+Be aware that if you call your OS's version of `System.exit(0)` after calling `SDK.Shutdown()`, your game server container may
 restart for a brief period, inline with our [Health Checking]({{% ref "/docs/Guides/health-checking.md#health-failure-strategy" %}}) policies. 
 
-It is possible for the SDK server to receive a TERM signal from Kubernetes without receiving a SDK.Shutdown() API request from
-your GameServer. In this case, the SDK server will stay alive until the `terminationGracePeriodSeconds` in it's `podSpec` have
+{{< alert title="Note" color="info">}}
+There are also a number of cases where the SDK server can receive a TERM signal from Kubernetes aside from your game server 
+calling SDK.Shutdown(). In those cases, the SDK server will stay alive until the `terminationGracePeriodSeconds` period in the SDK server `podSpec` has
 elapsed, or until it receives the `SDK.Shutdown()` API request from your game server, whichever comes first.
+{{< /alert >}}
 
 ### Configuration Retrieval 
 
 #### GameServer()
 
-This returns most of the backing GameServer configuration and Status. This can be useful
-for instances where you may want to know Health check configuration, or the IP and Port
-the GameServer is currently allocated to.
+This returns a useful subset of the `GameServer` configuration and status. This can be useful
+when your game server wants to know its Health check configuration, or its IP and Port after moving to 
+`Allocated` state, for example.
 
-Since the GameServer contains an entire [PodTemplate](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/#pod-templates)
-the returned object is limited to that configuration that was deemed useful. If there are
-areas that you feel are missing, please [file an issue](https://github.com/googleforgames/agones/issues) or pull request.
+Since the GameServer contains an entire [PodTemplate](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/#pod-templates) (much of which is of limited use to game server applications), 
+several parts of the template are omitted, leaving the parts of the template that the community has said they find most useful.  Refer to the `message GameServer` portion of the 
+{{% ghlink href="proto/sdk/sdk.proto" %}}`sdk.proto`{{% /ghlink %}} definition file to see what information your game server will receive from this function call. 
+If there are missing parts of the template that you'd like access to using this function, please [file an issue](https://github.com/googleforgames/agones/issues) or pull request.
 
-The easiest way to see what is exposed, is to check
-the {{% ghlink href="proto/sdk/sdk.proto" %}}`sdk.proto`{{% /ghlink %}} source file, specifically
-the `message GameServer` portion.
-
-For language specific documentation, have a look at the respective source (linked above) 
+For language specific documentation, have a look at client's respective source (linked above) 
 and the {{< ghlink href="examples" >}}examples{{< /ghlink >}}.
 
 #### WatchGameServer(function(gameserver){...})
 
-This executes the passed in callback with the current `GameServer` details whenever the underlying `GameServer` configuration is updated.
-This can be useful to track `GameServer > Status > State` changes, `metadata` changes such as labels and annotations, and more.
-
-In combination with this SDK, manipulating [Annotations](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/) and
-[Labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) can also be a useful way to communicate information through Kubernetes to running game server processes 
+This executes the passed-in callback with the current `GameServer` details whenever the `GameServer` configuration is updated. It returns a useful subset of the `GameServer` configuration and status which allows you to track `GameServer state` and `metadata` changes, and more.
+When your game server has registered a callback using `WatchGameServer()`,
+manipulating metadata such as [Annotations](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/) and
+[Labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) on the `GameServer` pod using the Kubernetes API can be a useful way to communicate information to running game server processes 
 from outside processes and systems.  This is especially useful when combined with
-[metadata applied]({{< ref "/docs/Reference/gameserverallocation.md" >}}) during
-`GameServerAllocation` .
+[metadata applied during
+`GameServerAllocation`]({{< ref "/docs/Reference/gameserverallocation.md" >}}).
 
-Since the GameServer contains an entire [PodTemplate](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/#pod-templates)
-the returned object is limited to that configuration that was deemed useful. If there are
-areas that you feel are missing, please [file an issue](https://github.com/googleforgames/agones/issues) or pull request.
+Since the GameServer contains an entire [PodTemplate](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/#pod-templates) (much of which is of limited use to game server applications), 
+several parts of the template are omitted, leaving the parts of the template that the community has said they find most useful.  Refer to the `message GameServer` portion of the 
+{{% ghlink href="proto/sdk/sdk.proto" %}}`sdk.proto`{{% /ghlink %}} definition file to see what information your game server will receive from this function call. 
+If there are missing parts of the template that you'd like access to using this function, please [file an issue](https://github.com/googleforgames/agones/issues) or pull request.
 
-The easiest way to see what is exposed, is to check
-the {{% ghlink href="proto/sdk/sdk.proto" %}}`sdk.proto`{{% /ghlink %}} source file, specifically
-the `message GameServer` portion..
-
-For language specific documentation, have a look at the respective source (linked above) 
+For language specific documentation, have a look at client's respective source (linked above) 
 and the {{< ghlink href="examples" >}}examples{{< /ghlink >}}.
-
 
 ### Metadata Management
 
