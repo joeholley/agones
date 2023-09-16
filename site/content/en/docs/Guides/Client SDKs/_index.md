@@ -78,7 +78,7 @@ Functions which change `GameServer` state or settings are:
 ### Lifecycle Management
 
 #### Ready()
-This tells Agones that the game server is ready to take player connections.
+Tells Agones that the game server is ready to take player connections.
 This updates the Kubernetes `GameServer` record to the `Ready` state, and poulates the public 
 IP address and connection port.
 
@@ -86,7 +86,7 @@ The preferred pattern is to call `Shutdown()` once a game has completed, and all
 This SDK call can also [change an `Allocated` `GameServer` back to the `Ready` state to be available for allocation again]({{% ref "/docs/Integration Patterns/reusing-gameservers.md" %}}), if this is a better fit for your usage pattern.
 
 #### Health()
-This sends a heartbeat to the SDK to designate that the `GameServer` is alive and
+Sends a heartbeat to the SDK to designate that the `GameServer` is alive and
 healthy. Failure to send heartbeats within the threshold configured in the `health` section of the 
 `GameServer` spec will result in the `GameServer` being marked as `Unhealthy`. 
 
@@ -125,7 +125,7 @@ Also, note that `SDK.Allocate()` **does not** guarantee that the `GameServer` mo
 {{< /alert >}}
 
 #### Shutdown()
-This tells Agones to begin the shut down process for the game server which made the API call. The game server state will be set `Shutdown` and the 
+Tells Agones to begin the shut down process for the game server which made the API call. The game server state will be set `Shutdown` and the 
 backing Pod will be `Terminated`. It is a good idea to make sure you are familiar with the [Termination of Pods](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination)
 Kubernetes documentation to understand the termination process and related configuration options.
 
@@ -145,7 +145,7 @@ elapsed, or until it receives the `SDK.Shutdown()` API request from your game se
 
 #### GameServer()
 
-This returns a useful subset of the `GameServer` configuration and status. This can be useful
+Returns a useful subset of the `GameServer` configuration and status. This can be useful
 when your game server wants to know its Health check configuration, or its IP and Port after moving to 
 `Allocated` state, for example.
 
@@ -159,10 +159,10 @@ and the {{< ghlink href="examples" >}}examples{{< /ghlink >}}.
 
 #### WatchGameServer(function(gameserver){...})
 
-This executes the passed-in callback with the current `GameServer` details whenever the `GameServer` configuration is updated. It returns a useful subset of the `GameServer` configuration and status which allows you to track `GameServer state` and `metadata` changes, and more.
+Executes the passed-in callback with the current `GameServer` details whenever the `GameServer` configuration is updated. It returns a useful subset of the `GameServer` configuration and status which allows you to track changes to `GameServer status`, `state`, `metadata`, and more.
 When your game server has registered a callback using `WatchGameServer()`,
 manipulating metadata such as [Annotations](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/) and
-[Labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) on the `GameServer` pod using the Kubernetes API can be a useful way to communicate information to running game server processes 
+[Labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) on the `GameServer` object using the Kubernetes API can be a useful way to communicate information to running game server processes 
 from outside processes and systems.  This is especially useful when combined with
 [metadata applied during
 `GameServerAllocation`]({{< ref "/docs/Reference/gameserverallocation.md" >}}).
@@ -179,20 +179,17 @@ and the {{< ghlink href="examples" >}}examples{{< /ghlink >}}.
 
 #### SetLabel(key, value)
 
-This will set a [Label](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) 
-key/value pair on the backing `GameServer` record that is stored in Kubernetes. 
+Sets a [Label](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/) 
+key/value pair on the backing `GameServer` object in Kubernetes. 
 
 To maintain isolation, the `key` value is automatically prefixed with the value **"agones.dev/sdk-"**. This is done for 
 two main reasons:
-*  The prefix allows the developer to always know if they are accessing a value that could have come from, or 
-   may be changed by the client SDK. Much like `private` vs `public` scope in a programming language, the Agones 
-   SDK only provides write access to GameServer labels with this prefix.
-*  The prefix allows for a smaller attack surface if the GameServer container gets compromised. Since a common approach is to expose GameServer containers directly to the internet to minimize network latency and the Agones project doesn't control what runs inside the container, limiting exposure if the pod were to become compromised is worth the extra development friction that comes with having this prefix in place.
+*  The prefix allows the developer to distinguish values the client SDK has permission to write. 
+Much like `private` vs `public` scope in a programming language, the Agones SDK only provides write access to `GameServer` labels with this prefix.
+*  The prefix limits the attack surface if the GameServer container gets compromised. Since `GameServer` containers are frequently directly exposed to the internet (to optimize multiplayer latency) and Agones doesn't control what runs inside the container, limiting access for compromised pods is worth the extra development friction that comes with having this prefix in place.
 
 {{< alert title="Warning" color="warning">}}
-Kubernetes has [limits on label lengths and which characters are allowed in keys and values](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set). 
- 
-Be sure to account for the label prefix above when considering length limits! 
+Kubernetes has [limits on lengths and which characters are allowed in label keys and values](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set). 
 {{< /alert >}}
 
 Setting `GameServer` labels can be useful if you want information from your running game server process to be 
@@ -200,12 +197,16 @@ observable or searchable through the Kubernetes API.
 
 #### SetAnnotation(key, value)
 
-This will set an [Annotation](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/) key/value pair
-on the backing `GameServer` record that is stored in Kubernetes. 
+Sets an [Annotation](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/) key/value pair
+on the backing `GameServer` object in Kubernetes. 
 
 To maintain isolation, the `key` value is automatically prefixed with **"agones.dev/sdk-"** for the same reasons as 
 in [SetLabel(...)](#setlabelkey-value) above. The isolation is also important as Agones uses annotations on the 
 `GameServer` as part of its internal processing.
+
+{{< alert title="Warning" color="warning">}}
+Kubernetes has [limits on lengths and which characters are allowed in annotations](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/#syntax-and-character-set). 
+{{< /alert >}}
 
 Setting `GameServer` annotations can be useful if you want information from your running game server process to be 
 observable through the Kubernetes API.
@@ -216,55 +217,44 @@ observable through the Kubernetes API.
 
 #### Alpha().PlayerConnect(playerID)
 
-This function increases the SDK’s stored player count by one, and appends this playerID to 
-`GameServer.Status.Players.IDs`.
+Attempts to increment the SDK's stored player count and include the provided playerID in the list stored in `GameServer.Status.Players.IDs`.
 
-[`GameServer.Status.Players.Count` and `GameServer.Status.Players.IDs`][playerstatus]
-are then set to update the player count and id list a second from now,
-unless there is already an update pending, in which case the update joins that batch operation.
+If the provided playerID **does not exist** in the playerID list, `PlayerConnect()` increments the count, adds the playerID to the list, and returns true. 
 
-`PlayerConnect()` returns true and adds the playerID to the list of playerIDs if this playerID was not already in the
-list of connected playerIDs.
+If the provided playerID **does not exist** in the playerID list **but** incrementing the count would exceed the playerID capacity you've configured, `PlayerConnect()` leaves the count and list unchanged, and returns false. 
 
-If the playerID exists within the list of connected playerIDs, `PlayerConnect()` will return false, and the list of
-connected playerIDs will be left unchanged.
+If the provided playerID **already exists** in the playerID list, `PlayerConnect()` leaves the count and list unchanged, and returns false.
 
-An error will be returned if the playerID was not already in the list of connected playerIDs but the player capacity for
-the server has been reached. The playerID will not be added to the list of playerIDs.
+The Kubernetes `GameServer` object fields [`GameServer.Status.Players.Count` and `GameServer.Status.Players.IDs`][playerstatus] are updated by `PlayerConnect()` after a one second delay.  If there is already an update pending, they are combined into a batch operation.
 
 {{< alert title="Note" color="info">}}
-Do not use this method if you are manually managing `GameServer.Status.Players.IDs` and `GameServer.Status.Players.Count`
+Do not combine this function with manually managing `GameServer.Status.Players.IDs` and `GameServer.Status.Players.Count`
 through the Kubernetes API, as indeterminate results will occur.  
 {{< /alert >}}
     
 #### Alpha().PlayerDisconnect(playerID)
 
-This function decreases the SDK’s stored player count by one, and removes the playerID from 
-[`GameServer.Status.Players.IDs`][playerstatus].
+Attempts to decrement the SDK's stored player count and remove the provided playerID in the list stored in `GameServer.Status.Players.IDs`.
 
-`GameServer.Status.Players.Count` and `GameServer.Status.Players.IDs` are then set to 
-update the player count and id list a second from now,
-unless there is already an update pending, in which case the update joins that batch operation.
+If the provided playerID **exists** in the playerID list, `PlayerDisconnect()` decrements the count, removes the playerID from the list, and returns true. 
 
-`PlayerDisconnect()` will return true and remove the supplied playerID from the list of connected playerIDs if the
-playerID value exists within the list.
+If the provided playerID **does not exist** in the playerID list `PlayerDisconnect()` leaves the count and list unchanged, and returns false. 
 
-If the playerID was not in the list of connected playerIDs, the call will return false, and the connected playerID list
-will be left unchanged.
+The Kubernetes `GameServer` object fields [`GameServer.Status.Players.Count` and `GameServer.Status.Players.IDs`][playerstatus] are updated by `PlayerDisconnect()` after a one second delay.  If there is already an update pending, they are combined into a batch operation.
 
 {{< alert title="Note" color="info">}}
-Do not use this method if you are manually managing `GameServer.Status.Players.IDs` and `GameServer.Status.Players.Count`
+Do not combine this function with manually managing `GameServer.Status.Players.IDs` and `GameServer.Status.Players.Count`
 through the Kubernetes API, as indeterminate results will occur.  
 {{< /alert >}}
 
 #### Alpha().SetPlayerCapacity(count)
 
-Update the [`GameServer.Status.Players.Capacity`][playerstatus] value with a new capacity.
+Updates the [`GameServer.Status.Players.Capacity`][playerstatus] value with a new capacity.
 
 #### Alpha().GetPlayerCapacity()
 
-This function retrieves the current player capacity. This is always accurate from what has been set through this SDK,
-even if the value has yet to be updated on the GameServer status resource.
+Retrieves the current player capacity. This is always accurate to what has been set through this SDK,
+even if the value has yet to be updated in the `GameServer.Status.Players.Capacity` resource.
 
 {{< alert title="Note" color="info">}}
 If `GameServer.Status.Players.Capacity` is set manually through the Kubernetes API, use `SDK.GameServer()` or 
@@ -273,34 +263,34 @@ If `GameServer.Status.Players.Capacity` is set manually through the Kubernetes A
 
 #### Alpha().GetPlayerCount()
 
-This function retrieves the current player count. 
-This is always accurate from what has been set through this SDK, even if the value has yet to be updated on the 
-GameServer status resource.
+Retrieves the current player count. This is always accurate to what has been set through this SDK, 
+even if the value has yet to be updated in the `GameServer.Status.Players` resource.
 
 {{< alert title="Note" color="info">}}
-If `GameServer.Status.Players.IDs` is set manually through the Kubernetes API, use SDK.GameServer() 
-or SDK.WatchGameServer() instead to retrieve the current player count.
+If `GameServer.Status.Players.IDs` is set manually through the Kubernetes API, use `SDK.GameServer()` 
+or `SDK.WatchGameServer()` instead to retrieve the current player count.
 {{< /alert >}}
 
 #### Alpha().IsPlayerConnected(playerID)
 
-This function returns if the playerID is currently connected to the GameServer. This is always accurate from what has
-been set through this SDK,
-even if the value has yet to be updated on the GameServer status resource.
+Returns if the provided playerID is in the list of playerIDs connected to the GameServer. 
+This is always accurate to what has been set through this SDK,
+even if the value has yet to be updated in the `GameServer.Status.Players.IDs` resource.
 
 {{< alert title="Note" color="info">}}
-If `GameServer.Status.Players.IDs` is set manually through the Kubernetes API, use SDK.GameServer() 
-or SDK.WatchGameServer() instead to determine connected status.
+If `GameServer.Status.Players.IDs` is set manually through the Kubernetes API, use `SDK.GameServer()` 
+or `SDK.WatchGameServer()` instead to retrieve the current player count.
 {{< /alert >}}
 
 #### Alpha().GetConnectedPlayers()
 
-This function returns the list of the currently connected player ids. This is always accurate from what has been set
-through this SDK, even if the value has yet to be updated on the GameServer status resource.
+Returns the list of the currently connected playerIDs. 
+This is always accurate to what has been set through this SDK, 
+even if the value has yet to be updated in the `GameServer.Status.Players.IDs` resource.
 
 {{< alert title="Note" color="info">}}
-If `GameServer.Status.Players.IDs` is set manually through the Kubernetes API, use SDK.GameServer() 
-or SDK.WatchGameServer() instead to list the connected players.
+If `GameServer.Status.Players.IDs` is set manually through the Kubernetes API, use `SDK.GameServer()` 
+or `SDK.WatchGameServer()` instead to retrieve the current player count.
 {{< /alert >}}
 
 [playerstatus]: {{< ref "/docs/Reference/agones_crd_api_reference.html#agones.dev/v1.PlayerStatus" >}}
@@ -311,18 +301,17 @@ If there isn't an SDK for the language and platform you are looking for, you hav
 
 ### gRPC Client Generation
 
-If client generation is well supported by [gRPC](https://grpc.io/docs/), then generate client(s) from
-the proto files found in the {{% ghlink href="proto/sdk" %}}`proto/sdk`{{% /ghlink %}},
-directory and look at the current {{< ghlink href="sdks" >}}sdks{{< /ghlink >}} to see how the wrappers are
-implemented to make interaction with the SDK server simpler for the user.
+If [gRPC](https://grpc.io/docs/) client generation is well supported for your language, you can generate client(s) from
+the `.proto` files found in the {{% ghlink href="proto/sdk" %}}`proto/sdk`{{% /ghlink %}}, directory.  
+You can then reference the current {{< ghlink href="sdks" >}}SDKs{{< /ghlink >}} to see how they wrapped the generated client code to make interaction with the SDK server simpler for the user.
 
 ### REST API Implementation
 
 If client generation is not well supported by gRPC, or if there are other complicating factors, implement the SDK through
-the [REST]({{< relref "rest.md" >}}) HTTP+JSON interface. This could be written by hand, or potentially generated from
+the [`REST HTTP/JSON`]({{< relref "rest.md" >}}) interface. This could be written by hand, or potentially generated from
 the {{< ghlink href="sdks/swagger" >}}Swagger/OpenAPI Specifications{{< /ghlink >}}.
 
-Finally, if you build something that would be usable by the community, please submit a pull request!
+Finally, if you build something that would be useful to the community, please submit a pull request!
 
 ## SDK Conformance Test
 
